@@ -1,93 +1,81 @@
 # MariIRQ-Mamba-Lite
 
-Official code release for:
+Official implementation of:
 
 **MariIRQ-Mamba-Lite: Lightweight CPU Interrupt Side-Channel Fingerprinting for Maritime Websites**
 
-The repository contains the two stages reported in the paper:
+MariIRQ-Mamba-Lite contains two stages:
 
-- **MariIRQ-Adapt**: CPU interrupt trace → IRQ-WTCM → CountMamba-style Mamba2 backbone.
-- **MariIRQ-Mamba-Lite**: CPU interrupt trace → WICM → single-window PatchEmbed → three bidirectional Mamba2 blocks → classifier.
+- **MariIRQ-Adapt**: CPU interrupt traces → IRQ-WTCM → Mamba2-based classifier.
+- **MariIRQ-Mamba-Lite**: CPU interrupt traces → WICM → bidirectional Mamba2 → classifier.
 
-The public code is intentionally scoped to the 100-class closed-world, single-tab setting used in the paper. Development-only branches and long inline experiment notes were removed from the source files and consolidated here.
-
-## Repository structure
+## Repository Structure
 
 ```text
 MariIRQ-Mamba-Lite/
 ├── mariirq/
-│   ├── irq_wtcm.py                 # IRQ-WTCM construction
-│   ├── wicm.py                     # WICM construction
-│   ├── countmamba_backbone.py      # MariIRQ-Adapt backbone
-│   ├── bidirectional_mamba2.py     # Bidirectional Mamba2 block
-│   ├── mariirq_mamba_lite.py       # Final lightweight model
-│   └── utils.py
+│   ├── irq_wtcm.py
+│   ├── wicm.py
+│   ├── countmamba_backbone.py
+│   ├── bidirectional_mamba2.py
+│   ├── mariirq_mamba_lite.py
+│   ├── utils.py
+│   └── __init__.py
 ├── preprocessing/
-│   ├── prepare_data.py             # Raw BiggerFish-style traces → NPZ
-│   └── split_dataset.py            # 81/9/10 split per class for balanced data
+│   ├── prepare_data.py
+│   ├── split_dataset.py
+│   └── __init__.py
 ├── train_adapt.py
 ├── test_adapt.py
 ├── train_lite.py
 ├── test_lite.py
-├── scripts/
 ├── data/
 ├── checkpoints/
-└── results/
+├── requirements.txt
+└── README.md
 ```
 
+## Environment
 
-## Development-file mapping
+The experiments were conducted with:
 
-| Development file | Clean release |
-|---|---|
-| `convert_biggerfish_to_npz.py` | `preprocessing/prepare_data.py` |
-| `dataset_split.py` | `preprocessing/split_dataset.py` |
-| `dataset_irq_wf.py` | `mariirq/irq_wtcm.py` |
-| `dataset_irq_wicm.py` | `mariirq/wicm.py` |
-| `model_CountMamba.py` | `mariirq/countmamba_backbone.py` |
-| `model_CountMamba_Light.py` | `mariirq/mariirq_mamba_lite.py` |
-| `model_mamba2_light.py` | `mariirq/bidirectional_mamba2.py` |
-| `util.py` | `mariirq/utils.py` |
-| `main_irq_wf.py` | `train_adapt.py` |
-| `main_irq_light.py` | `train_lite.py` |
+- Python 3.10
+- PyTorch 2.1.2 + CUDA 11.8
+- Mamba-SSM 2.2.2
+- causal-conv1d 1.4.0
+- NVIDIA GeForce RTX 3080 Ti (12 GB)
 
-## Tested configuration
-
-The experiments were run with Python 3.10, PyTorch 2.1.2 + CUDA 11.8, Mamba-SSM 2.2.2, and causal-conv1d 1.4.0 on an NVIDIA GeForce RTX 3080 Ti (12 GB).
-
-Install PyTorch and the CUDA-matched Mamba/causal-conv1d wheels first, then install the remaining packages:
+Install the required packages:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-For Mamba-SSM installation details, follow the environment guidance in the original CountMamba repository and the Mamba repository for your CUDA/PyTorch combination.
+Mamba-SSM and causal-conv1d should be installed with versions compatible with the local PyTorch and CUDA environment.
 
-## Dataset format
+## Dataset
 
-Each sample is stored as:
-
-```text
-X[i, :, 0] = timestamp in seconds
-X[i, :, 1] = scaled CPU interrupt value
-y[i]       = website class label
-```
-
-The paper setting uses:
+The experimental dataset contains:
 
 - 100 maritime websites
 - 100 traces per website
 - 10,000 traces in total
 - 5 s per trace
-- 5000 samples per trace
+- 5000 interrupt samples per trace
 - approximately 1 ms sampling interval
-- 81 training / 9 validation / 10 test traces per class
+- 81 / 9 / 10 traces per class for training / validation / testing
 
-The preprocessing script maps non-zero interrupt values to `[0, 1500]` using a global min-max transform, matching the provided experimental pipeline.
+Each sample is stored as:
 
-### Prepare data
+```text
+X[i, :, 0] = timestamp
+X[i, :, 1] = CPU interrupt value
+y[i]       = website label
+```
 
-For an NPZ file or a directory containing BiggerFish-style `.pkl` files:
+## Data Preparation
+
+Convert the raw traces to NPZ format:
 
 ```bash
 python preprocessing/prepare_data.py \
@@ -95,28 +83,27 @@ python preprocessing/prepare_data.py \
   --output_dir data/processed/maritime
 ```
 
-Then create the train/validation/test splits:
+Create the training, validation, and test splits:
 
 ```bash
 python preprocessing/split_dataset.py \
   --data_file data/processed/maritime/data.npz
 ```
 
-Expected output:
+The processed dataset is expected to contain:
 
 ```text
 data/processed/maritime/
-├── data.npz
 ├── train.npz
 ├── valid.npz
 └── test.npz
 ```
 
-## Stage I: MariIRQ-Adapt
+## MariIRQ-Adapt
 
-### IRQ-WTCM
+MariIRQ-Adapt converts CPU interrupt traces into the IRQ-WTCM representation and applies a Mamba2-based classifier.
 
-Final configuration:
+### IRQ-WTCM Configuration
 
 | Parameter | Value |
 |---|---:|
@@ -125,115 +112,103 @@ Final configuration:
 | Amplitude-bin width | 75 |
 | Maximum bin index | 32 |
 | AMP_DELTA threshold | 75 |
-| CLUSTER rolling window | 20 samples |
+| CLUSTER window | 20 |
 | Log transform | `log1p` |
 
-The 35 rows consist of 33 amplitude-bin rows plus AMP_DELTA and CLUSTER.
+The 35 rows consist of 33 amplitude-bin rows together with the AMP_DELTA and CLUSTER descriptors.
 
-### Train
+### Training
 
 ```bash
 python train_adapt.py
 ```
 
-Equivalent explicit configuration:
+The default configuration uses:
 
-```bash
-python train_adapt.py \
-  --data_path data/processed/maritime \
-  --irq_bin_size 75 \
-  --maximum_cell_number 32 \
-  --irq_cluster_window 20 \
-  --max_matrix_len 4998 \
-  --embed_dim 256 \
-  --depth 3 \
-  --batch_size 128 \
-  --lr 2e-3 \
-  --epochs 50
+```text
+Embedding dimension: 256
+Mamba2 depth:        3
+Batch size:          128
+Learning rate:       2e-3
+Epochs:              50
+Seed:                2024
 ```
 
-Training uses AdamW, weight decay `0.05`, label smoothing `0.1`, cosine learning-rate decay, and seed `2024`.
-
-### Test
+### Evaluation
 
 ```bash
 python test_adapt.py
 ```
 
-The default checkpoint is:
+The default checkpoint path is:
 
 ```text
 checkpoints/mariirq_adapt/max_f1.pth
 ```
 
-## Stage II: MariIRQ-Mamba-Lite
+## MariIRQ-Mamba-Lite
 
-### WICM
+MariIRQ-Mamba-Lite compresses each interrupt trace into the Windowed Interrupt Characteristic Matrix (WICM).
 
-Each non-overlapping 20 ms window is represented by four features:
+Each 20 ms window contains four features:
 
-1. `TOTAL`: sum of interrupt values.
-2. `HIGH_IO`: number of samples above 800.
-3. `STD`: within-window standard deviation.
-4. `MAX_DELTA`: maximum adjacent absolute change.
+- `TOTAL`: sum of interrupt values
+- `HIGH_IO`: number of samples above the high-I/O threshold
+- `STD`: within-window standard deviation
+- `MAX_DELTA`: maximum adjacent absolute change
 
-Final representation:
+The final WICM representation is:
 
 ```text
-4 × 250 = 1000 input elements
+4 × 250
 ```
 
-### Model configuration
+### Model Configuration
 
 | Parameter | Value |
 |---|---:|
 | PatchEmbed kernel | `(4, 1)` |
 | Embedding dimension | 192 |
-| Mamba2 depth | 3 bidirectional blocks |
+| Bidirectional Mamba2 blocks | 3 |
 | Head dimension | 32 |
 | DropPath | 0.1 |
-| WICM window / stride | 20 / 20 |
+| WICM window size | 20 |
+| WICM stride | 20 |
 | HIGH_IO threshold | 800 |
 
-The final release uses the **single-window `(4, 1)` PatchEmbed**. The earlier `(4, 3)` version is an ablation variant and is not used by the final model.
-
-### Train
+### Training
 
 ```bash
 python train_lite.py
 ```
 
-Equivalent explicit configuration:
+The default configuration uses:
 
-```bash
-python train_lite.py \
-  --data_path data/processed/maritime \
-  --wicm_window_size 20 \
-  --wicm_window_stride 20 \
-  --high_io_threshold 800 \
-  --embed_dim 192 \
-  --headdim 32 \
-  --depth 3 \
-  --batch_size 128 \
-  --lr 3e-3 \
-  --epochs 50
+```text
+Embedding dimension: 192
+Mamba2 depth:        3
+Head dimension:      32
+Batch size:          128
+Learning rate:       3e-3
+Epochs:              50
+Seed:                2024
 ```
 
-Training uses AdamW, weight decay `0.05`, label smoothing `0.1`, cosine learning-rate decay, and seed `2024`.
-
-### Test
+### Evaluation
 
 ```bash
 python test_lite.py
 ```
 
-The default checkpoint is:
+The default checkpoint path is:
 
 ```text
 checkpoints/mariirq_mamba_lite/max_f1.pth
 ```
 
-## Main results
+## Results
+
+### Classification Performance
 
 | Method | Accuracy (%) | Precision (%) | Recall (%) | F1-score (%) |
 |---|---:|---:|---:|---:|
@@ -242,30 +217,22 @@ checkpoints/mariirq_mamba_lite/max_f1.pth
 | MariIRQ-Adapt | **93.40** | **93.84** | **93.40** | **93.38** |
 | MariIRQ-Mamba-Lite | 91.70 | 92.23 | 91.70 | 91.67 |
 
-Efficiency comparison between the two proposed stages:
+### Efficiency
 
 | Metric | MariIRQ-Adapt | MariIRQ-Mamba-Lite |
 |---|---:|---:|
-| Input | 35 × 4998 | 4 × 250 |
+| Input size | 35 × 4998 | 4 × 250 |
 | Input elements | 174,930 | 1,000 |
 | Parameters | 2.959 M | 2.279 M |
 | Checkpoint size | 11.310 MiB | 8.722 MiB |
 | Training time | 6.27 h | 0.48 h |
 | Peak training GPU memory | 10,430.23 MiB | 2,801.78 MiB |
 
-## Notes on the cleaned release
-
-The GitHub-oriented version differs from the development folder only in code organization and removal of unused/development-only paths. The final paper settings were made the defaults, including:
-
-- IRQ-WTCM bin width changed from an old development default of `100` to the final `75`.
-- Lite PatchEmbed changed from the ablation `(4, 3)` configuration to the final `(4, 1)` configuration.
-- The old commented-out Lite and bidirectional-Mamba implementations were removed.
-- Early-stage and multi-tab CountMamba branches that are not part of this paper were removed from the public training/evaluation scripts.
-- Mamba-SSM is required for reproduction; the previous GRU fallback was removed to avoid silently evaluating a different model.
-
 ## Attribution
 
-MariIRQ-Adapt retains the CountMamba sequence-modeling backbone and adapts its input representation to CPU interrupt traces. Please also cite the original CountMamba work when using the Stage-I implementation:
+MariIRQ-Adapt is developed based on the CountMamba framework.
+
+If you use the Stage-I implementation, please also cite the original CountMamba work:
 
 ```bibtex
 @inproceedings{deng2025countmamba,
@@ -277,12 +244,14 @@ MariIRQ-Adapt retains the CountMamba sequence-modeling backbone and adapts its i
 }
 ```
 
-Project reference: https://github.com/SJTU-dxw/CountMamba-WF
+CountMamba project:
+
+https://github.com/SJTU-dxw/CountMamba-WF
 
 ## Citation
 
-The paper citation will be added after publication.
+The citation for MariIRQ-Mamba-Lite will be added after publication.
 
 ## License
 
-No software license has been selected in this package. Add the license chosen by the authors before public release.
+A software license will be added before the public release.
